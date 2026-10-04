@@ -1,0 +1,299 @@
+if not isfile("Gojo.rbxmx") then
+writefile("Gojo.rbxmx", game:HttpGet("https://github.com/ian49972/RBXMS/raw/refs/heads/main/Gojo.rbxmx"))
+end
+
+writefile("Purple.mp3", game:HttpGet("https://github.com/ian49972/smth/raw/refs/heads/main/Purple.mp3"))
+
+writefile("UnlimitedPurple.mp3", game:HttpGet("https://github.com/ian49972/smth/raw/refs/heads/main/UnlimitedPurple.mp3"))
+ 
+writefile("ImaginaryPurple.mp3", game:HttpGet("https://github.com/ian49972/smth/raw/refs/heads/main/ImaginaryPurple.mp3"))
+ 
+writefile("Domain.mp3", game:HttpGet("https://github.com/ian49972/smth/raw/refs/heads/main/Domain.mp3"))
+
+writefile("Honored.mp3", game:HttpGet("https://github.com/ian49972/smth/raw/refs/heads/main/Honored.mp3"))
+
+local Players = game:GetService("Players")
+local TS = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+local EasingStyleMap = {
+	[Enum.PoseEasingStyle.Linear]   = Enum.EasingStyle.Linear,
+	[Enum.PoseEasingStyle.Bounce]   = Enum.EasingStyle.Bounce,
+	[Enum.PoseEasingStyle.Cubic]    = Enum.EasingStyle.Cubic,
+	[Enum.PoseEasingStyle.Elastic]  = Enum.EasingStyle.Elastic,
+	[Enum.PoseEasingStyle.Constant] = Enum.EasingStyle.Linear,
+}
+
+local EasingDirectionMap = {
+	[Enum.PoseEasingDirection.In]    = Enum.EasingDirection.In,
+	[Enum.PoseEasingDirection.Out]   = Enum.EasingDirection.Out,
+	[Enum.PoseEasingDirection.InOut] = Enum.EasingDirection.InOut,
+}
+
+local function PlayKeyframeSequence(Model, KeyframeSequence, SpeedMult)
+	SpeedMult = SpeedMult or 1
+	local keyframes = {}
+	for _, kf in ipairs(KeyframeSequence:GetKeyframes()) do
+		table.insert(keyframes, {Time = kf.Time, KF = kf})
+	end
+	table.sort(keyframes, function(a,b) return a.Time < b.Time end)
+
+	if #keyframes == 0 then return end
+
+	local jointData = {}     
+	local motorMap = {}
+	local boneMap = {}
+
+	local function ResolveJoint(pose)
+		local name = pose.Name
+		if motorMap[name] then return motorMap[name], "Motor6D" end
+		if boneMap[name] then return boneMap[name], "Bone" end
+
+		for _, v in ipairs(Model:GetDescendants()) do
+			if v:IsA("Motor6D") and v.Part1 and v.Part1.Name == name then
+				motorMap[name] = v
+				return v, "Motor6D"
+			elseif v:IsA("Bone") and v.Name == name then
+				boneMap[name] = v
+				return v, "Bone"
+			end
+		end
+		return nil, nil
+	end
+
+	for _, entry in ipairs(keyframes) do
+		for _, pose in ipairs(entry.KF:GetDescendants()) do
+			if pose:IsA("Pose") and pose.Weight > 0 then
+				local joint, jtype = ResolveJoint(pose)
+				if joint then
+					if not jointData[pose.Name] then jointData[pose.Name] = {} end
+					table.insert(jointData[pose.Name], {
+						time = entry.Time,
+						cframe = pose.CFrame,
+						style = pose.EasingStyle,
+						dir = pose.EasingDirection,
+						joint = joint,
+						jtype = jtype
+					})
+				end
+			end
+		end
+	end
+
+	local totalLength = keyframes[#keyframes].Time / SpeedMult
+	local isPlaying = true
+	local startTime = os.clock()
+	local connection
+
+	connection = RunService.Heartbeat:Connect(function()
+		if not isPlaying or not Model or not Model.Parent then
+			if connection then connection:Disconnect() end
+			return
+		end
+
+		local elapsed = (os.clock() - startTime) * SpeedMult
+		local timePos = elapsed % totalLength
+
+		for jointName, poses in pairs(jointData) do
+			if #poses < 1 then continue end
+			local lastPose = poses[1]
+			local nextPose = poses[1]
+
+			for i = 1, #poses - 1 do
+				if timePos >= poses[i].time and timePos < poses[i+1].time then
+					lastPose = poses[i]
+					nextPose = poses[i+1]
+					break
+				end
+			end
+
+			if timePos >= poses[#poses].time then
+				lastPose = poses[#poses]
+				nextPose = poses[#poses]
+			end
+
+			local alpha = (nextPose.time > lastPose.time) and 
+				(timePos - lastPose.time) / (nextPose.time - lastPose.time) or 0
+
+			local style = EasingStyleMap[nextPose.style] or EasingStyleMap[lastPose.style] or Enum.EasingStyle.Linear
+			local dir = EasingDirectionMap[nextPose.dir] or EasingDirectionMap[lastPose.dir] or Enum.EasingDirection.InOut
+
+			local easedAlpha = TS:GetValue(alpha, style, dir)
+
+			local finalCF = lastPose.cframe:Lerp(nextPose.cframe, easedAlpha)
+
+			if lastPose.jtype == "Motor6D" then
+				lastPose.joint.Transform = finalCF
+			else
+				lastPose.joint.Transform = finalCF
+			end
+		end
+	end)
+
+	return {
+		Length = totalLength,
+		Stop = function() 
+			isPlaying = false 
+			if connection then connection:Disconnect() end 
+		end,
+		Play = function() startTime = os.clock() end
+	}
+end
+
+local tool = Instance.new("Tool")
+tool.Name = "The Honored One"
+tool.RequiresHandle = false
+tool.Parent = player:WaitForChild("Backpack")
+
+local running = false
+
+local originalLighting = {}
+for _, v in pairs(Lighting:GetChildren()) do
+	if v:IsA("PostEffect") or v:IsA("Sky") or v:IsA("Atmosphere") then
+		originalLighting[v.ClassName] = v:Clone()
+	end
+end
+local originalClockTime = Lighting.ClockTime
+local originalBrightness = Lighting.Brightness
+local originalAmbient = Lighting.Ambient
+
+tool.Activated:Connect(function()
+	if running then return end
+	running = true
+
+	tool:Destroy()
+
+	local char = player.Character or player.CharacterAdded:Wait()
+	local humanoid = char:WaitForChild("Humanoid")
+	local root = char:WaitForChild("HumanoidRootPart")
+
+	local originalAnimator = humanoid:FindFirstChildOfClass("Animator")
+	if originalAnimator then
+		originalAnimator:Destroy()
+	end
+
+	local originalSpeed = humanoid.WalkSpeed
+	local originalHipHeight = humanoid.HipHeight
+
+	humanoid.WalkSpeed = 0
+
+	local inserted = game:GetObjects(getcustomasset("Gojo.rbxmx"))[1]
+	if inserted then
+		inserted.Parent = ReplicatedStorage
+	end
+
+	local keyframe = inserted:FindFirstChild("Anims", true):FindFirstChild("HonoredOne")
+	if not keyframe then
+		running = false
+		return
+	end
+
+	local sound = Instance.new("Sound")
+	sound.SoundId = getcustomasset("Honored.mp3")
+	sound.Volume = 1
+	sound.Looped = false
+	sound.Parent = workspace
+	sound:Play()
+
+	local controller = PlayKeyframeSequence(char, keyframe, 0.4)
+	controller.Play()
+
+	TS:Create(humanoid, TweenInfo.new(3, Enum.EasingStyle.Quad), {HipHeight = originalHipHeight + 100}):Play()
+
+	local Vignette = true
+
+	for _, v in pairs(Lighting:GetChildren()) do v:Destroy() end
+
+	local Bloom = Instance.new("BloomEffect", Lighting)
+	local Blur = Instance.new("BlurEffect", Lighting)
+	local ColorCor = Instance.new("ColorCorrectionEffect", Lighting)
+	local SunRays = Instance.new("SunRaysEffect", Lighting)
+	local Sky = Instance.new("Sky", Lighting)
+	local Atm = Instance.new("Atmosphere", Lighting)
+
+	Bloom.Intensity = 0.3
+	Bloom.Size = 10
+	Bloom.Threshold = 0.8
+	Blur.Size = 5
+	ColorCor.Brightness = 0.1
+	ColorCor.Contrast = 0.5
+	ColorCor.Saturation = -0.3
+	ColorCor.TintColor = Color3.fromRGB(255, 235, 203)
+	SunRays.Intensity = 0.075
+	SunRays.Spread = 0.727
+
+	Sky.SkyboxBk = "http://www.roblox.com/asset/?id=151165214"
+	Sky.SkyboxDn = "http://www.roblox.com/asset/?id=151165197"
+	Sky.SkyboxFt = "http://www.roblox.com/asset/?id=151165224"
+	Sky.SkyboxLf = "http://www.roblox.com/asset/?id=151165191"
+	Sky.SkyboxRt = "http://www.roblox.com/asset/?id=151165206"
+	Sky.SkyboxUp = "http://www.roblox.com/asset/?id=151165227"
+	Sky.SunAngularSize = 10
+
+	Lighting.Ambient = Color3.fromRGB(2,2,2)
+	Lighting.Brightness = 2.25
+	Lighting.ColorShift_Bottom = Color3.fromRGB(0,0,0)
+	Lighting.ColorShift_Top = Color3.fromRGB(0,0,0)
+	Lighting.EnvironmentDiffuseScale = 0.2
+	Lighting.EnvironmentSpecularScale = 0.2
+	Lighting.GlobalShadows = true
+	Lighting.OutdoorAmbient = Color3.fromRGB(0,0,0)
+	Lighting.ShadowSoftness = 0.2
+	Lighting.ClockTime = 17
+	Lighting.GeographicLatitude = 45
+	Lighting.ExposureCompensation = 0.5
+
+	Atm.Density = 0.364
+	Atm.Offset = 0.556
+	Atm.Color = Color3.fromRGB(199, 175, 166)
+	Atm.Decay = Color3.fromRGB(44, 39, 33)
+	Atm.Glare = 0.36
+	Atm.Haze = 1.72
+
+	if Vignette then
+		local Gui = Instance.new("ScreenGui")
+		Gui.Parent = playerGui
+		Gui.IgnoreGuiInset = true
+		local ShadowFrame = Instance.new("ImageLabel")
+		ShadowFrame.Parent = Gui
+		ShadowFrame.AnchorPoint = Vector2.new(0.5,1)
+		ShadowFrame.Position = UDim2.new(0.5,0,1,0)
+		ShadowFrame.Size = UDim2.new(1,0,1.05,0)
+		ShadowFrame.BackgroundTransparency = 1
+		ShadowFrame.Image = "rbxassetid://4576475446"
+		ShadowFrame.ImageTransparency = 0.3
+		ShadowFrame.ZIndex = 10
+	end
+
+	sound.Ended:Wait()
+
+	controller.Stop()
+
+	TS:Create(humanoid, TweenInfo.new(2, Enum.EasingStyle.Quad), {HipHeight = originalHipHeight}):Play()
+	humanoid.WalkSpeed = originalSpeed
+
+	for _, v in pairs(Lighting:GetChildren()) do v:Destroy() end
+	for _, original in pairs(originalLighting) do
+		original:Clone().Parent = Lighting
+	end
+	Lighting.ClockTime = originalClockTime
+	Lighting.Brightness = originalBrightness
+	Lighting.Ambient = originalAmbient
+
+	if humanoid and humanoid.Parent then
+		local newAnimator = Instance.new("Animator")
+		newAnimator.Parent = humanoid
+	end
+ 
+ task.wait(2)
+
+loadstring(game:HttpGet("https://raw.githubusercontent.com/ian49972/SCRIPTS/refs/heads/main/HollowPurple"))()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/ian49972/SCRIPTS/refs/heads/main/InfiniteVoid"))()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/ian49972/SCRIPTS/refs/heads/main/ImaginaryPurple"))()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/ian49972/SCRIPTS/refs/heads/main/UnlimitedPurple"))()
+
+	running = false
+end)
